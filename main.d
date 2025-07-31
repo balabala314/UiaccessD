@@ -1,6 +1,7 @@
 pragma(lib,"kernel32.lib");
 pragma(lib,"advapi32.lib");
 pragma(lib,"shell32.lib");
+pragma(lib,"shcore.lib");
 import std.process;
 import core.sys.windows.windows;
 import core.sys.windows.tlhelp32;
@@ -14,13 +15,14 @@ import core.stdc.stdlib : exit; // for exit(0)
 import std.conv : to;
 import std.string;
 import std.stdio;
+import run_dlg;
 
 extern(Windows) DWORD GetLastError();
 extern(Windows) BOOL IsUserAnAdmin();
+extern(Windows) int SetProcessDpiAwareness(int);
 
 const int PROCESS_QUERY_LIMITED_INFORMATION = 4096;
 
-int depth = 0;
 
 size_t wstrlen(const(wchar)[] arr) {
     foreach (i, c; arr) {
@@ -31,11 +33,6 @@ size_t wstrlen(const(wchar)[] arr) {
 }
 
 DWORD duplicateWinloginToken(DWORD dwSessionId, DWORD dwDesiredAccess, HANDLE* phToken) {
-    depth++;
-
-    writeln(depth,"into duplicateWinloginToken");
-    scope(exit) {writeln(depth,"out duplicateWinloginToken");depth--;}
-
     DWORD dwErr;
     PRIVILEGE_SET ps;
     ps.PrivilegeCount = 1;
@@ -101,10 +98,6 @@ DWORD duplicateWinloginToken(DWORD dwSessionId, DWORD dwDesiredAccess, HANDLE* p
 }
 
 DWORD createUIAccessToken(HANDLE* phToken) {
-    depth++;
-    writeln(depth,"into createUIAccessToken");
-    scope(exit) {writeln(depth,"out createUIAccessToken");depth--;}
-
     DWORD dwErr;
     HANDLE hTokenSelf;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &hTokenSelf)) {
@@ -147,10 +140,6 @@ DWORD createUIAccessToken(HANDLE* phToken) {
 }
 
 BOOL checkForUIAccess(DWORD* pdwErr, DWORD* pfUIAccess) {
-depth++;
-
-    writeln(depth,"into CheckForUIAccess");
-    scope(exit) {writeln(depth,"out CheckForUIAccess");depth--;}
     BOOL result = FALSE;
     HANDLE hToken;
     if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
@@ -168,11 +157,6 @@ depth++;
 }
 
 DWORD prepareForUIAccess() {
-depth++;
-
-    writeln(depth,"into PrepareForUIAccess");
-    scope(exit) {writeln(depth,"out PrepareForUIAccess");depth--;}
-
     DWORD dwErr;
     HANDLE hTokenUIAccess;
     uint fUIAccess;
@@ -187,12 +171,11 @@ depth++;
         STARTUPINFOW si;
         PROCESS_INFORMATION pi;
         GetStartupInfoW(&si);
-        // auto cmd = GetCommandLineW();
-        wchar[] as = "python"w.dup;
-        wchar* cmd = &as[0];
+        auto cmd = GetCommandLineW();
         if (CreateProcessAsUserW(hTokenUIAccess, null, cmd, null, null, FALSE, 0, null, null, &si, &pi)) {
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
+            return 1;
             // exit(0);
         } else {
             dwErr = GetLastError();
@@ -202,8 +185,17 @@ depth++;
     }
     return dwErr;
 }
-void main(){
-    writeln(IsUserAnAdmin());
-    writeln(prepareForUIAccess());
-    writeln("final");
+extern (Windows)
+int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, // @suppress(dscanner.style.phobos_naming_convention)
+            LPSTR lpCmdLine, int nCmdShow){
+    SetProcessDpiAwareness(1); // @suppress(dscanner.unused_result)
+    if (!IsUserAnAdmin()){
+        writefln("Admin is required!");
+        return 0;
+    }
+    if (prepareForUIAccess() != 0){
+        return 1;
+    }
+    runDlg("C:\\"w, "Run With UIAccess"w, "Run a program with UIAccess token:"w);
+    return 0;
 }
